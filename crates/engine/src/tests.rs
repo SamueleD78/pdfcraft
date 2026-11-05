@@ -9167,7 +9167,7 @@ fn explicit_button_document_requests_preserve_effects_and_undo() {
         )
         .unwrap();
     assert_eq!(out.error, None);
-    assert_eq!(out.requests, [js::Request::OpenDoc("other.pdf".into()), js::Request::SaveAs, js::Request::ShowPanel(js::Panel::Attachments)]);
+    assert_eq!(out.requests, [js::Request::OpenDoc { path: "other.pdf".into(), page: None }, js::Request::SaveAs, js::Request::ShowPanel(js::Panel::Attachments)]);
     assert_eq!(s.get(id).unwrap().form.iter().find(|f| f.name == "price").unwrap().value, ["3"]);
     assert_eq!(s.get(id).unwrap().can_undo(), Some("Run JavaScript"));
     s.take_js_output(id);
@@ -10375,7 +10375,7 @@ fn sync_failed_link_initialization_does_not_commit_effects() {
     let proposed = input.run();
     assert!(proposed.error.as_deref().is_some_and(|e| e.contains("initialization failed")));
     assert_eq!(proposed.changed.len(), 1);
-    assert_eq!(proposed.requests, [js::Request::OpenDoc("other.pdf".into())]);
+    assert_eq!(proposed.requests, [js::Request::OpenDoc { path: "other.pdf".into(), page: None }]);
     let finished = s.finish_link_javascript(&input, proposed).unwrap();
     assert!(finished.requests.is_empty());
     let document = s.get(id).unwrap();
