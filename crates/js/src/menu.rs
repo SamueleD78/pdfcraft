@@ -120,7 +120,7 @@ pub(crate) fn open_doc(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         text(&o.get(js_string!("cPath"), ctx)?, ctx)?
     } else {
         // Acrobat supports app.openDoc(path, this), referring to the current document.
-        let same_doc = args.get(1).is_none_or(|v| v.is_undefined() || v.is_null() || v.as_object() == Some(&ctx.global_object()));
+        let same_doc = args.get(1).is_none_or(|v| v.is_undefined() || v.is_null() || v.as_object() == Some(ctx.global_object()));
         if !same_doc || !args.iter().skip(2).all(|v| v.is_undefined() || v.is_null()) {
             return Err(error("unsupported openDoc options"));
         }
