@@ -2112,9 +2112,29 @@ fn popup_limits_and_open_doc_are_fail_closed() {
     assert!(o.error.is_some());
     let o = go("app.openDoc({cPath:'relative.pdf'})", &Event::doc("Console"));
     assert_eq!(o.error, None);
-    assert_eq!(o.requests, [Request::OpenDoc("relative.pdf".into())]);
+    assert_eq!(o.requests, [Request::OpenDoc { path: "relative.pdf".into(), page: None }]);
     let o = go("app.popUpMenuEx({cName:'blank',cReturn:''}) === null", &Event::doc("Console"));
     assert_eq!(o.result.as_deref(), Some("true"));
+}
+
+#[test]
+fn two_open_doc_handles_keep_independent_page_destinations() {
+    let o = go(
+        "var a=app.openDoc('./a.pdf',this);a.pageNum=12;var b=app.openDoc('./b.pdf',this);b.pageNum=42;a.pageNum=9;",
+        &Event::doc("Console"),
+    );
+    assert_eq!(o.error, None, "{o:?}");
+    assert_eq!(o.requests, [
+        Request::OpenDoc { path: "./a.pdf".into(), page: Some(9) },
+        Request::OpenDoc { path: "./b.pdf".into(), page: Some(42) },
+    ]);
+}
+
+#[test]
+fn open_doc_proxy_never_accesses_a_file() {
+    let o = go("var r=app.openDoc('local.pdf',this);r.pageNum=3;console.println(typeof r);", &Event::doc("Console"));
+    assert_eq!(o.error, None, "{o:?}");
+    assert_eq!(o.requests, [Request::OpenDoc { path: "local.pdf".into(), page: Some(3) }]);
 }
 
 #[test]

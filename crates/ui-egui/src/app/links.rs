@@ -22,7 +22,33 @@ impl PdfCraftApp {
         self.open_resolved_remote_link(path, destination);
     }
 
-    /// Take a pending request exactly once. Closing its source invalidates the request.
+    /// Bound script-initiated opens so a single PDF cannot flood the UI.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn queue_script_remote_document(&mut self, pending: PendingRemoteLink) {
+        const MAX_QUEUED: usize = 16;
+        if self.pending_script_documents.len() >= MAX_QUEUED {
+            self.notify_tr("Too many local PDF requests; additional requests were not queued.");
+            return;
+        }
+        self.pending_script_documents.push_back(pending);
+        self.next_script_remote_document();
+    }
+
+    /// Deliver each queued request to the existing local-PDF permission dialog.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn next_script_remote_document(&mut self) {
+        if self.pending_remote_link.is_some() || self.pending_link.is_some() {
+            return;
+        }
+        while let Some(pending) = self.pending_script_documents.pop_front() {
+            if self.session.get(pending.source).is_some() {
+                self.pending_remote_link = Some(pending);
+                break;
+            }
+        }
+    }
+
+    /// Take a consent decision exactly once; closing the source invalidates it.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn resolve_pending_remote_link(&mut self, open: bool) {
         if let Some(pending) = self.pending_remote_link.take()
@@ -31,6 +57,7 @@ impl PdfCraftApp {
         {
             self.open_resolved_remote_link(pending.path, pending.destination);
         }
+        self.next_script_remote_document();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -121,5 +148,7 @@ impl PdfCraftApp {
         {
             self.open_url(&p.url);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.next_script_remote_document();
     }
 }

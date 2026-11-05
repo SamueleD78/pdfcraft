@@ -3,7 +3,8 @@ use super::host::host;
 use super::run::{initialization_limit, run_here};
 #[cfg(not(target_arch = "wasm32"))]
 use super::{Arc, DocInfo, Event, FieldState, Limits, SCRIPT_STACK, refuse};
-use super::{Context, JsArray, JsResult, JsValue, Outcome, RefCell, Request, arg, error, js_string, s, text};
+use super::{Context, JsArray, JsResult, JsValue, Outcome, RefCell, Request, NativeFunction, ObjectInitializer, arg, error, function, js_string, s, text};
+use boa_engine::property::PropertyDescriptor;
 
 /// A menu tree; the UI never evaluates script-provided text.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,14 +107,11 @@ pub(crate) fn popup_menu(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> Js
     }
 }
 
-/// Queue OpenDoc as a viewer request and return null, never a live document or file contents.
-/// Reject empty/oversized paths, nonempty cFS, non-null oDoc and unsupported positional
-/// options. This host performs no file I/O; request retention follows the host's limits.
-/// Local-path resolution and consent belong to the frontend, while headless tools return
-/// the request as data. A request alone is not permission to open a file.
+/// Return a deferred document proxy; it never opens files or bypasses consent.
+/// Each proxy records its own zero-based page number on its associated request.
 pub(crate) fn open_doc(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
-    let arg = arg(args, 0);
-    let path = if let Some(o) = arg.as_object() {
+    let first = arg(args, 0);
+    let path = if let Some(o) = first.as_object() {
         let fs = o.get(js_string!("cFS"), ctx)?;
         let base = o.get(js_string!("oDoc"), ctx)?;
         if (!fs.is_undefined() && !text(&fs, ctx)?.is_empty()) || (!base.is_undefined() && !base.is_null()) {
@@ -121,17 +119,40 @@ pub(crate) fn open_doc(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsRe
         }
         text(&o.get(js_string!("cPath"), ctx)?, ctx)?
     } else {
-        if !superfluous_open_arguments(args) {
+        // Acrobat supports app.openDoc(path, this), referring to the current document.
+        let same_doc = args.get(1).is_none_or(|v| v.is_undefined() || v.is_null() || v.as_object() == Some(&ctx.global_object()));
+        if !same_doc || !args.iter().skip(2).all(|v| v.is_undefined() || v.is_null()) {
             return Err(error("unsupported openDoc options"));
         }
-        text(&arg, ctx)?
+        text(&first, ctx)?
     };
     if path.is_empty() || path.len() > 4096 {
         return Err(error("invalid openDoc path"));
     }
-    host(ctx)?.borrow_mut().request(Request::OpenDoc(path));
-    // A document object cannot be returned before host consent. Fail closed when used as one.
-    Ok(JsValue::null())
+    let index = host(ctx)?.borrow_mut().request_open_doc(path).ok_or_else(|| error("openDoc request limit reached"))?;
+    fn get(_: &JsValue, _: &[JsValue], index: &usize, ctx: &mut Context) -> JsResult<JsValue> {
+        let h = host(ctx)?.borrow();
+        match h.requests.get(*index) {
+            Some(Request::OpenDoc { page, .. }) => Ok(JsValue::from(page.unwrap_or(0) as f64)),
+            _ => Err(error("openDoc handle expired")),
+        }
+    }
+    fn set(_: &JsValue, args: &[JsValue], index: &usize, ctx: &mut Context) -> JsResult<JsValue> {
+        let n = arg(args, 0).to_number(ctx)?;
+        if !n.is_finite() {
+            return Err(error("openDoc pageNum must be finite"));
+        }
+        let page = n.max(0.0) as usize;
+        if !host(ctx)?.borrow_mut().open_doc_page(*index, page) {
+            return Err(error("openDoc handle expired"));
+        }
+        Ok(JsValue::undefined())
+    }
+    let getter = function(ctx, NativeFunction::from_copy_closure_with_captures(get, index));
+    let setter = function(ctx, NativeFunction::from_copy_closure_with_captures(set, index));
+    let proxy = ObjectInitializer::new(ctx).build();
+    proxy.define_property_or_throw(js_string!("pageNum"), PropertyDescriptor::builder().get(getter).set(setter).configurable(true), ctx)?;
+    Ok(proxy.into())
 }
 
 /// Start a fresh script worker with the normal cooperative Boa and host limits.
@@ -169,6 +190,3 @@ pub fn interactive(
     Ok(rx)
 }
 
-fn superfluous_open_arguments(args: &[JsValue]) -> bool {
-    args.iter().skip(1).all(|v| v.is_undefined() || v.is_null())
-}

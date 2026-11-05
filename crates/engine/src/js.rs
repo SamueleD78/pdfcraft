@@ -47,7 +47,7 @@ impl JsOutput {
                 Request::SaveAs => {
                     self.console.push("A field script asked to save the document as a new file; only a button may open Save As".into())
                 }
-                Request::OpenDoc(_) => {
+                Request::OpenDoc { .. } => {
                     self.console.push("A field script asked to open another document; opening documents requires an explicit action".into())
                 }
                 r => self.requests.push(r.clone()),

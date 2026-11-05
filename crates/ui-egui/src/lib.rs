@@ -667,4 +667,6 @@ pub struct PdfCraftApp {
     pub pending_full_screen: Option<DocId>,
     /// An absolute GoToR target waiting for approval, before any target-file I/O (#1364).
     pub pending_remote_link: Option<PendingRemoteLink>,
+    /// Multiple independent script-origin requests, waiting for consent.
+    pending_script_documents: std::collections::VecDeque<PendingRemoteLink>,
 }

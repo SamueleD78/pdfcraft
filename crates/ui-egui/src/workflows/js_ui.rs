@@ -76,7 +76,7 @@ impl PdfCraftApp {
                         self.views[i].go_to_page(p);
                     }
                 }
-                Request::OpenDoc(path) => self.request_script_document(id, path),
+                Request::OpenDoc { path, page } => self.request_script_document(id, path, page),
                 Request::LaunchUrl(u) => self.request_document_url(&u, crate::LinkOrigin::Script),
                 Request::Submit(u) => self.notify_fmt(
                     "The form asks to be submitted to {u}; PdfCraft doesn't send form data. Save the document to keep your entries.",
@@ -742,29 +742,25 @@ fn reading_colours_section(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens)
 impl PdfCraftApp {
     /// Resolve a script's local path without I/O and queue the existing consent prompt.
     /// Relative paths use the source document's path, with no working-directory fallback.
-    /// If another remote-link or link prompt is pending, notify the user and ignore this
-    /// request rather than replacing it or queuing it. Resolution failures are shown;
-    /// accepting the prompt later schedules normal file opening/validation. The web build
-    /// reports this operation as unavailable.
-    fn request_script_document(&mut self, id: DocId, file: String) {
+    /// Preserve every openDoc request and its destination until separate user consent.
+    fn request_script_document(&mut self, id: DocId, file: String, page: Option<usize>) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if self.pending_remote_link.is_some() || self.pending_link.is_some() {
-                self.notify_tr("Another link request is awaiting your permission. Respond to it, then try opening the document again.");
-                return;
-            }
             let source_path = self.session.get(id).and_then(|d| d.path.as_deref()).map(std::path::Path::new);
             match pdfcraft_engine::js::resolve_javascript_document_path(source_path, &file) {
                 Ok(path) => {
-                    self.pending_remote_link =
-                        Some(crate::PendingRemoteLink { source: id, path, destination: pdfcraft_render::RemoteDestination::Default })
+                    let destination = match page {
+                        Some(page) => pdfcraft_render::RemoteDestination::Page { page, view: pdfcraft_render::DestView::Top },
+                        None => pdfcraft_render::RemoteDestination::Default,
+                    };
+                    self.queue_script_remote_document(crate::PendingRemoteLink { source: id, path, destination });
                 }
                 Err(e) => self.notify_error(e),
             }
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (id, file);
+            let _ = (id, file, page);
             self.notify_tr("Opening local files from JavaScript is unavailable on the web");
         }
     }

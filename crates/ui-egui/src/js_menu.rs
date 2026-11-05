@@ -757,61 +757,25 @@ mod tests {
     }
 
     #[test]
-    fn busy_script_document_request_notifies_without_replacing_pending_consent() {
-        let mut missing = Vec::new();
-        for (language, notice) in [
-            ("en", "Another link request is awaiting your permission. Respond to it, then try opening the document again."),
-            ("fr", "Une autre demande de lien attend votre autorisation. Répondez-y, puis réessayez d’ouvrir le document."),
-        ] {
-            for pending_file in [false, true] {
-                let mut h = harness();
-                h.state_mut().set_option("language", language).unwrap();
-                h.step();
-                let id = h.state().active_ids().unwrap().1;
-                let before = h.state().session.get(id).unwrap().bytes.clone();
-                if pending_file {
-                    h.state_mut().handle_js(
-                        id,
-                        pdfcraft_engine::js::JsOutput {
-                            requests: vec![pdfcraft_engine::js::Request::OpenDoc(synthetic_path("first.pdf"))],
-                            ..Default::default()
-                        },
-                    );
-                    assert!(h.state().pending_remote_link.is_some());
-                } else {
-                    h.state_mut().request_document_url("https://example.org/first", crate::LinkOrigin::Script);
-                    assert!(h.state().pending_link.is_some());
-                }
-                let file_before = h.state().pending_remote_link.clone();
-                let url_before = h.state().pending_link.clone();
-                h.state_mut().toast = None;
-                h.state_mut().handle_js(
-                    id,
-                    pdfcraft_engine::js::JsOutput {
-                        requests: vec![pdfcraft_engine::js::Request::OpenDoc(synthetic_path("ignored.pdf"))],
-                        ..Default::default()
-                    },
-                );
-                assert_eq!(h.state().pending_link, url_before);
-                match (&h.state().pending_remote_link, &file_before) {
-                    (Some(after), Some(before)) => {
-                        assert_eq!(after.source, before.source);
-                        assert_eq!(after.path, before.path);
-                        assert!(matches!(after.destination, pdfcraft_render::RemoteDestination::Default));
-                    }
-                    (None, None) => {}
-                    other => panic!("pending file consent changed: {other:?}"),
-                }
-                assert_eq!(h.state().views.len(), 1, "the rejected request opens no document");
-                assert!(h.state().pending_opens.is_empty());
-                assert_eq!(h.state().session.get(id).unwrap().bytes, before);
-                assert!(!h.state().session.get(id).unwrap().dirty);
-                if h.state().toast.as_ref().map(|(text, _)| text.as_str()) != Some(notice) {
-                    missing.push(format!("{language}, pending_file={pending_file}: {:?}", h.state().toast));
-                }
-            }
-        }
-        assert!(missing.is_empty(), "a busy OpenDoc was silently ignored:\n{}", missing.join("\n"));
+    fn multiple_open_doc_requests_preserve_destinations_and_consent() {
+        let mut h = harness();
+        let id = h.state().active_ids().expect("document").1;
+        h.state_mut().handle_js(id, pdfcraft_engine::js::JsOutput {
+            requests: vec![
+                pdfcraft_engine::js::Request::OpenDoc { path: synthetic_path("first.pdf"), page: Some(2) },
+                pdfcraft_engine::js::Request::OpenDoc { path: synthetic_path("second.pdf"), page: Some(8) },
+            ],
+            ..Default::default()
+        });
+        let first = h.state().pending_remote_link.as_ref().expect("first request");
+        assert!(matches!(first.destination, pdfcraft_render::RemoteDestination::Page { page: 2, .. }));
+        assert_eq!(h.state().pending_script_documents.len(), 1);
+        h.state_mut().resolve_pending_remote_link(false);
+        let second = h.state().pending_remote_link.as_ref().expect("second request");
+        assert!(matches!(second.destination, pdfcraft_render::RemoteDestination::Page { page: 8, .. }));
+        assert!(h.state().pending_script_documents.is_empty());
+        h.state_mut().resolve_pending_remote_link(false);
+        assert!(h.state().pending_remote_link.is_none());
     }
     #[test]
     fn disabling_javascript_cancels_a_waiting_menu() {
@@ -1651,7 +1615,7 @@ mod tests {
             alerts: vec![pdfcraft_engine::js::Message::plain("verified alert")],
             requests: vec![
                 pdfcraft_engine::js::Request::GoToPage(1),
-                pdfcraft_engine::js::Request::OpenDoc(synthetic_path("other.pdf")),
+                pdfcraft_engine::js::Request::OpenDoc { path: synthetic_path("other.pdf"), page: None },
                 pdfcraft_engine::js::Request::LaunchUrl("https://example.org/verify".into()),
             ],
             ..Default::default()

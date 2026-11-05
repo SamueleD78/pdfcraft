@@ -67,11 +67,30 @@ impl Host {
         };
         let bytes = match &r {
             Request::Reset(names) => names.iter().fold(0usize, |n, s| n.saturating_add(s.len()).saturating_add(std::mem::size_of::<String>())),
-            Request::LaunchUrl(u) | Request::Submit(u) | Request::Focus(u) | Request::OpenDoc(u) => u.len(),
+            Request::LaunchUrl(u) | Request::Submit(u) | Request::Focus(u) => u.len(),
+            Request::OpenDoc { path, .. } => path.len(),
             _ => 0,
         };
         if self.room(bytes) {
             self.requests.push(r);
+        }
+    }
+
+    /// Queue one independent openDoc request, returning its stable index.
+    pub(crate) fn request_open_doc(&mut self, path: String) -> Option<usize> {
+        let index = self.requests.len();
+        self.request(Request::OpenDoc { path, page: None });
+        matches!(self.requests.get(index), Some(Request::OpenDoc { .. })).then_some(index)
+    }
+
+    /// Set the deferred page destination on the exact request represented by a proxy.
+    pub(crate) fn open_doc_page(&mut self, index: usize, page: usize) -> bool {
+        match self.requests.get_mut(index) {
+            Some(Request::OpenDoc { page: target, .. }) => {
+                *target = Some(page);
+                true
+            }
+            _ => false,
         }
     }
 }

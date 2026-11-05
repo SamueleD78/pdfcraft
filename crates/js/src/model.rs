@@ -237,7 +237,8 @@ pub enum Request {
     /// `app.execMenuItem("SaveAs")` (XFA forms' Save buttons).
     SaveAs,
     /// Request only: the host must obtain consent before accessing a file.
-    OpenDoc(String),
+    /// Deferred consent-gated PDF opening; page indices are zero based.
+    OpenDoc { path: String, page: Option<usize> },
     /// `app.execMenuItem("ShowHide…")`: show the side panel, or hide it when it is showing.
     ShowPanel(Panel),
 }
