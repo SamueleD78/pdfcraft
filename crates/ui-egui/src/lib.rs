@@ -669,4 +669,8 @@ pub struct PdfCraftApp {
     pub pending_remote_link: Option<PendingRemoteLink>,
     /// Multiple independent script-origin requests, waiting for consent.
     pending_script_documents: std::collections::VecDeque<PendingRemoteLink>,
+    /// Explicitly remembered local PDF grants, scoped to a source fingerprint and target.
+    trusted_pdf_links: Vec<state::TrustedPdfLink>,
+    /// Checkbox state for the currently displayed local-PDF consent dialog.
+    remember_remote_link: bool,
 }
