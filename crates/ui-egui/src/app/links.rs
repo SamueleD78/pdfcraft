@@ -19,7 +19,7 @@ impl PdfCraftApp {
         let digest = Sha256::digest(doc.bytes.as_slice());
         Some(crate::state::TrustedPdfLink {
             source: source.to_string(),
-            source_sha256: format!("{digest:x}"),
+            source_sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
             target: target.to_string(),
         })
     }
