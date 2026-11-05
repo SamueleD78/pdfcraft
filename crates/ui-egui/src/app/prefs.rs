@@ -389,3 +389,49 @@ impl PdfCraftApp {
         }
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod local_pdf_trust_tests {
+    use super::*;
+
+    fn grant() -> crate::state::TrustedPdfLink {
+        let cwd = std::env::current_dir().expect("working directory");
+        crate::state::TrustedPdfLink {
+            source: cwd.join("source.pdf").to_string_lossy().into_owned(),
+            source_sha256: "a".repeat(64),
+            target: cwd.join("target.pdf").to_string_lossy().into_owned(),
+        }
+    }
+
+    #[test]
+    fn saved_grant_survives_restore_and_can_be_revoked() {
+        let mut app = PdfCraftApp::new();
+        let key = grant();
+        app.trusted_pdf_links.push(key.clone());
+        let saved = app.persist();
+        let mut restored = PdfCraftApp::new();
+        restored.restore(&saved);
+        assert_eq!(restored.trusted_pdf_links, vec![key]);
+
+        restored.trusted_pdf_links.clear();
+        let mut forgotten = PdfCraftApp::new();
+        forgotten.restore(&restored.persist());
+        assert!(forgotten.trusted_pdf_links.is_empty());
+    }
+
+    #[test]
+    fn damaged_grants_are_ignored_and_duplicates_removed() {
+        let key = grant();
+        let payload = serde_json::json!({
+            "trusted_pdf_links": [
+                key,
+                key,
+                {"source": "not-absolute.pdf", "source_sha256": "a".repeat(64), "target": "target.pdf"},
+                {"source": "/tmp/source.pdf", "source_sha256": "wrong", "target": "/tmp/target.pdf"}
+            ]
+        });
+        let mut app = PdfCraftApp::new();
+        app.restore(&payload.to_string());
+        assert_eq!(app.trusted_pdf_links.len(), 1);
+    }
+}

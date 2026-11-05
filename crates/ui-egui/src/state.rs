@@ -406,6 +406,15 @@ pub struct PendingLink {
     pub origin: LinkOrigin,
 }
 
+/// One user-approved source PDF and local PDF destination.
+/// Fingerprinting the source bytes invalidates trust when that PDF changes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TrustedPdfLink {
+    pub source: String,
+    pub source_sha256: String,
+    pub target: String,
+}
+
 /// A resolved local target and its original source/destination, independent of the active tab.
 #[derive(Clone, Debug)]
 pub struct PendingRemoteLink {

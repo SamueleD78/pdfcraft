@@ -1,6 +1,58 @@
 use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use sha2::{Digest, Sha256};
 
 impl PdfCraftApp {
+    /// A remembered decision applies only to these exact source bytes at their original
+    /// absolute location, and to this one target path. File I/O is never performed here.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn local_link_trust_key(&self, pending: &PendingRemoteLink) -> Option<crate::state::TrustedPdfLink> {
+        const MAX_HASH_BYTES: usize = 32 * 1024 * 1024;
+        let doc = self.session.get(pending.source)?;
+        let source = doc.path.as_deref()?;
+        let target = pending.path.to_str()?;
+        if source.len() > 4096 || target.len() > 4096 || doc.bytes.len() > MAX_HASH_BYTES
+            || !std::path::Path::new(source).is_absolute() || !pending.path.is_absolute()
+        {
+            return None;
+        }
+        let digest = Sha256::digest(doc.bytes.as_slice());
+        Some(crate::state::TrustedPdfLink {
+            source: source.to_string(),
+            source_sha256: format!("{digest:x}"),
+            target: target.to_string(),
+        })
+    }
+
+    /// Cheap eligibility check used by the dialog without hashing the PDF every frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn can_remember_local_link(&self, pending: &PendingRemoteLink) -> bool {
+        const MAX_HASH_BYTES: usize = 32 * 1024 * 1024;
+        self.session.get(pending.source).is_some_and(|doc| {
+            doc.path.as_deref().is_some_and(|path| path.len() <= 4096 && std::path::Path::new(path).is_absolute())
+                && pending.path.to_str().is_some_and(|target| target.len() <= 4096 && pending.path.is_absolute())
+                && doc.bytes.len() <= MAX_HASH_BYTES
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn link_is_trusted(&self, pending: &PendingRemoteLink) -> bool {
+        self.local_link_trust_key(pending).is_some_and(|key| self.trusted_pdf_links.contains(&key))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remember_local_link(&mut self, pending: &PendingRemoteLink) {
+        const MAX_SAVED: usize = 128;
+        if let Some(key) = self.local_link_trust_key(pending) {
+            // A changed source PDF replaces its prior decision for this same target.
+            self.trusted_pdf_links.retain(|item| item.source != key.source || item.target != key.target);
+            if self.trusted_pdf_links.len() >= MAX_SAVED {
+                self.trusted_pdf_links.remove(0);
+            }
+            self.trusted_pdf_links.push(key);
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn open_remote_link(&mut self, source: DocId, file: String, destination: pdfcraft_render::RemoteDestination) {
         if self.pending_remote_link.is_some() || self.pending_link.is_some() {
@@ -15,11 +67,14 @@ impl PdfCraftApp {
                 return;
             }
         };
-        if pdfcraft_engine::remote_document_path_is_absolute(&file) {
-            self.pending_remote_link = Some(PendingRemoteLink { source, path, destination });
-            return;
+        // Both relative and absolute paths need consent, unless the user has
+        // explicitly remembered this source/target pair.
+        let pending = PendingRemoteLink { source, path, destination };
+        if self.link_is_trusted(&pending) {
+            self.open_resolved_remote_link(pending.path, pending.destination);
+        } else {
+            self.pending_remote_link = Some(pending);
         }
-        self.open_resolved_remote_link(path, destination);
     }
 
     /// Bound script-initiated opens so a single PDF cannot flood the UI.
@@ -42,6 +97,10 @@ impl PdfCraftApp {
         }
         while let Some(pending) = self.pending_script_documents.pop_front() {
             if self.session.get(pending.source).is_some() {
+                if self.link_is_trusted(&pending) {
+                    self.open_resolved_remote_link(pending.path, pending.destination);
+                    continue;
+                }
                 self.pending_remote_link = Some(pending);
                 break;
             }
@@ -51,17 +110,21 @@ impl PdfCraftApp {
     /// Take a consent decision exactly once; closing the source invalidates it.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn resolve_pending_remote_link(&mut self, open: bool) {
+        let remember = std::mem::take(&mut self.remember_remote_link);
         if let Some(pending) = self.pending_remote_link.take()
             && open
             && self.session.get(pending.source).is_some()
         {
-            self.open_resolved_remote_link(pending.path, pending.destination);
+            let accepted = self.open_resolved_remote_link(pending.path.clone(), pending.destination.clone());
+            if accepted && remember {
+                self.remember_local_link(&pending);
+            }
         }
         self.next_script_remote_document();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn open_resolved_remote_link(&mut self, path: std::path::PathBuf, destination: pdfcraft_render::RemoteDestination) {
+    fn open_resolved_remote_link(&mut self, path: std::path::PathBuf, destination: pdfcraft_render::RemoteDestination) -> bool {
         let path = path.to_string_lossy().into_owned();
         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
         let stamp = file_watch::Stamp::at(&path);
@@ -77,8 +140,12 @@ impl PdfCraftApp {
             recovered: None,
             then: None,
         });
-        if let Err(error) = result {
-            self.notify_fmt("Couldn't follow linked PDF: {reason}", &[("reason", &error)]);
+        match result {
+            Ok(_) => true,
+            Err(error) => {
+                self.notify_fmt("Couldn't follow linked PDF: {reason}", &[("reason", &error)]);
+                false
+            }
         }
     }
 

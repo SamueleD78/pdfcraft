@@ -561,6 +561,13 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
                 .small()
                 .color(t.text_muted),
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        ui.horizontal(|ui| {
+            ui.label(format!("Remembered local PDF links: {}", app.trusted_pdf_links.len()));
+            if crate::widgets::pill_button(ui, "Forget all", false).clicked() {
+                app.trusted_pdf_links.clear();
+            }
+        });
     });
 }
 

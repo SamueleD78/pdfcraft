@@ -29,6 +29,8 @@ egui_extras = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "persistence", "links", "clipboard"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Source-byte fingerprint used to revoke remembered local-file trust on document edits.
+sha2 = "0.11"
 log = { workspace = true }
 # UTC/calendar display (combine modified-time stamp, the form date picker) goes through chrono
 # (no hand-rolled calendar code); std-only, so it stays wasm-safe.

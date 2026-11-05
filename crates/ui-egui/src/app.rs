@@ -265,6 +265,8 @@ impl PdfCraftApp {
             pending_full_screen: None,
             pending_remote_link: None,
             pending_script_documents: Default::default(),
+            trusted_pdf_links: Vec::new(),
+            remember_remote_link: false,
             protect_draft: Default::default(),
             text_style_draft: Default::default(),
             boxes_draft: Default::default(),

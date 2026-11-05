@@ -665,7 +665,7 @@ pub struct PdfCraftApp {
     /// A document just opened asks to be shown in Full Screen mode (`/PageMode /FullScreen`):
     /// the person is asked first, as in Acrobat, and this is the document waiting for the answer.
     pub pending_full_screen: Option<DocId>,
-    /// An absolute GoToR target waiting for approval, before any target-file I/O (#1364).
+    /// A local PDF link awaiting approval, before any target-file I/O.
     pub pending_remote_link: Option<PendingRemoteLink>,
     /// Multiple independent script-origin requests, waiting for consent.
     pending_script_documents: std::collections::VecDeque<PendingRemoteLink>,
