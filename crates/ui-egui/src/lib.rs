@@ -74,6 +74,7 @@ use theme::{ThemeKind, ThemePreference};
 
 mod app;
 mod hooks;
+mod js_menu;
 mod persist;
 mod platform;
 mod state;
@@ -509,6 +510,8 @@ pub struct PdfCraftApp {
     pub compare: Option<compare_ui::CompareState>,
     /// The JavaScript console and the Document JavaScripts draft.
     pub js_console: js_ui::JsConsole,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) link_script: js_menu::LinkMenus,
     pub doc_js: js_ui::DocJsDraft,
     pub a11y: a11y_ui::A11yState,
     pub(crate) tags_state: tags_ui::State,

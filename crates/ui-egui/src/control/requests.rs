@@ -12,7 +12,8 @@ impl Control {
                 // Viewport info is fresh in `logic`; the last UI pass's rectangle can be stale.
                 let geometry = Geometry::current(ctx, host.capture_epoch());
                 let size = geometry.size;
-                state["window"] = json!({ "width": size.x, "height": size.y, "pixels_per_point": geometry.pixels_per_point });
+                state["window"] =
+                    json!({ "width": size.x, "height": size.y, "pixels_per_point": geometry.pixels_per_point, "focused": ctx.input(|i| i.focused) });
                 Ok(Handled::Now(Ok(state)))
             }
             "ui.commands" => Ok(Handled::Now(Ok(host.commands()))),

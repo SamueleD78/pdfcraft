@@ -384,6 +384,28 @@ fn signature_appearance_labels_keep_their_separator() {
     }
 }
 
+#[test]
+fn javascript_web_notices_translate_and_keep_english_fallback() {
+    let mut missing = Vec::new();
+    for (key, french) in [
+        (
+            "Opening local files from JavaScript is unavailable on the web",
+            "L’ouverture de fichiers locaux depuis JavaScript n’est pas disponible sur le Web",
+        ),
+        ("Interactive JavaScript menus require the desktop application", "Les menus JavaScript interactifs nécessitent l’application de bureau"),
+    ] {
+        assert_eq!(tr(Lang::from_pref("en"), key), key);
+        let translation = tr(Lang::from_pref("fr"), key);
+        if translation != french {
+            missing.push((key, translation.to_string()));
+        }
+        for language in &LANGUAGES {
+            assert!(!tr(Lang::from_pref(language.code), key).is_empty());
+        }
+    }
+    assert!(missing.is_empty(), "untranslated Web notices: {missing:?}");
+}
+
 /// With craft-fonts, every Japanese translation has glyphs: with all interface faces (desktop)
 /// and with BIZ UDPGothic Regular alone (the web build's only Japanese face).
 #[test]

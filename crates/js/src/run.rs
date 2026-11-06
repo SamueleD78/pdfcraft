@@ -109,7 +109,14 @@ pub fn run(script: &str, event: &Event, doc: &DocInfo, fields: &[FieldState], do
 /// script can observe uncommitted writes. Read-only calculations avoid copying the whole form.
 pub fn run_shared(script: &str, event: &Event, doc: &DocInfo, fields: Arc<Vec<FieldState>>, doc_scripts: &[String], limits: Limits) -> Outcome {
     let failed = |why: String| Outcome { rc: true, value: event.value.clone(), change: event.change.clone(), error: Some(why), ..Default::default() };
-    if let Some(why) = refuse(script) {
+    if let Some(why) = initialization_limit(doc_scripts).or_else(|| refuse(script)) {
+        return failed(why);
+    }
+    // Link initialization is fail-closed; ordinary form scripts retain upstream's
+    // skip-and-report behavior below, within the shared aggregate initialization limit.
+    if event.kind == "Link"
+        && let Some(why) = doc_scripts.iter().find_map(|d| refuse(d))
+    {
         return failed(why);
     }
     // A document script too long or too deeply nested to run safely is skipped and reported,
@@ -142,6 +149,14 @@ pub fn run_shared(script: &str, event: &Event, doc: &DocInfo, fields: Arc<Vec<Fi
     }
     #[cfg(target_arch = "wasm32")]
     run_here(script, event, doc, fields, kept, skipped, limits)
+}
+
+pub(super) fn initialization_limit(scripts: &[String]) -> Option<String> {
+    if scripts.len() > 1024 || scripts.iter().try_fold(0usize, |total, s| total.checked_add(s.len())).is_none_or(|total| total > 1 << 20) {
+        Some("document JavaScript initialization exceeds its limit".into())
+    } else {
+        None
+    }
 }
 
 /// Host hooks that refuse to compile code from strings (`eval`, `Function` and its generator
@@ -181,9 +196,17 @@ fn doc_error(index: usize, error: &dyn std::fmt::Display) -> String {
     format!("document script {}: {error}", index.saturating_add(1))
 }
 
-/// `doc_scripts` are the document scripts to run with their places among all of them;
-/// `skipped` the ones refused before running, with the reason.
-fn run_here(
+/// Evaluate in a fresh Boa context with string-code generation disabled and COW fields.
+/// Link actions initialize document scripts under a synthetic Doc/Open event, then restore
+/// the real event before the action; other callers initialize under their actual event.
+/// A Link initialization error stops evaluation. Other hosts record document-script errors
+/// and continue with later initializers and the action, preserving upstream form behavior.
+/// Collected field changes, diagnostics and requests can still accompany an error; this
+/// function only returns an Outcome, leaving eligibility and effect application to the caller.
+/// Callers enforce the aggregate initialization limit and preflight refused Link initializers.
+/// `doc_scripts` keeps original indices; `skipped` records ordinary initializers refused
+/// before evaluation. Limits are cooperative, not hard wall-time or heap quotas.
+pub(super) fn run_here(
     script: &str,
     event: &Event,
     doc: &DocInfo,
@@ -215,16 +238,28 @@ fn run_here(
     let mut doc_errors: Vec<(usize, String)> = skipped.iter().map(|(i, why)| (*i, doc_error(*i, why))).collect();
     let result = (|| -> JsResult<()> {
         install(&mut ctx)?;
-        let ev = event_object(&mut ctx, event);
-        ctx.register_global_property(js_string!("event"), ev.clone(), Attribute::all())?;
-        // One document script that throws (calling a method PdfCraft lacks, say) must not keep
-        // every field script in the form from running: what it defined before the error, and
-        // the other scripts, stay available (#3940).
+        // Link actions have their own document initialization contract. Existing field,
+        // button and console callers initialize under their actual event, not a synthetic Open.
+        let link = event.kind == "Link";
+        let ev = event_object(&mut ctx, event, link);
+        // The Link target is the document/global object. Keeping its event binding
+        // non-enumerable avoids a global -> event -> target cycle during serialization.
+        let event_attributes = if link { Attribute::WRITABLE | Attribute::CONFIGURABLE } else { Attribute::all() };
+        ctx.register_global_property(js_string!("event"), ev.clone(), event_attributes)?;
+        if link {
+            let open_event = event_object(&mut ctx, &Event::doc("Open"), true);
+            ctx.register_global_property(js_string!("event"), open_event, event_attributes)?;
+        }
+        // Unrequested field initialization is tolerant upstream (#3940). A user-activated
+        // Link retains its all-or-error initialization contract before its own action runs.
         for &(i, d) in doc_scripts {
-            if let Err(e) = ctx.eval(Source::from_bytes(d)) {
+            if link {
+                ctx.eval(Source::from_bytes(d))?;
+            } else if let Err(e) = ctx.eval(Source::from_bytes(d)) {
                 doc_errors.push((i, doc_error(i, &e)));
             }
         }
+        ctx.register_global_property(js_string!("event"), ev.clone(), event_attributes)?;
         let r = ctx.eval(Source::from_bytes(script))?;
         if !r.is_undefined() {
             out.result = Some(text(&r, &mut ctx)?);
