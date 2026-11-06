@@ -810,6 +810,13 @@ fn card_javascript(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &m
         ),
         t,
     );
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.horizontal(|ui| {
+        ui.label(format!("Remembered local PDF links: {}", app.trusted_pdf_links.len()));
+        if widgets::pill_button(ui, "Forget all", false).clicked() {
+            app.trusted_pdf_links.clear();
+        }
+    });
 }
 
 /// Preferences dialog buttons: OK on the right. Returns true to close.
