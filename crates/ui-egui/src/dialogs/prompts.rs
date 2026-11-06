@@ -248,7 +248,7 @@ pub(super) fn full_screen_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     }
 }
 
-/// Absolute document-controlled local paths require consent before any filesystem access.
+/// A PDF-controlled local path needs consent unless this source/target pair was trusted.
 pub(super) fn remote_link_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let Some(pending) = app.pending_remote_link.clone() else { return };
     let mut choice = None;
@@ -271,6 +271,20 @@ pub(super) fn remote_link_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
         });
         ui.add_space(8.0);
         ui.label(tl!("Only allow this if you trust the source document."));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let eligible = app.can_remember_local_link(&pending);
+            ui.add_enabled(
+                eligible,
+                widgets::checkbox(&mut app.remember_remote_link, "Remember this PDF link (don't ask again)"),
+            );
+            if !eligible {
+                ui.label(
+                    egui::RichText::new("Remembering requires a source PDF of 32 MiB or less with an absolute file path.")
+                        .small(),
+                );
+            }
+        }
         ui.add_space(14.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if widgets::pill_button(ui, tl!("Cancel"), true).clicked() {
