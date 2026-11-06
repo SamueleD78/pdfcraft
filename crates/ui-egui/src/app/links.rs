@@ -126,6 +126,26 @@ impl PdfCraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     fn open_resolved_remote_link(&mut self, path: std::path::PathBuf, destination: pdfcraft_render::RemoteDestination) -> bool {
         let path = path.to_string_lossy().into_owned();
+        // Keep one tab per file, as in the ordinary File/Open code path.
+        // An existing tab must receive the destination on that specific view.
+        if let Some(index) = self.tab_showing(&path) {
+            self.startup_superseded = true;
+            self.active = Some(index);
+            self.apply_remote_destination_to(index, destination);
+            return true;
+        }
+        // A still-loading (or password-protected) document should not be loaded twice.
+        // The most recent destination wins while it is being prepared.
+        if let Some(pending) = self.pending_opens.iter_mut().find(|p| p.path.as_deref().is_some_and(|p| same_file(p, &path))) {
+            pending.after_open = Some(destination);
+            pending.activate = true;
+            return true;
+        }
+        if let Some(prompt) = self.password_prompt.as_mut().filter(|p| p.path.as_deref().is_some_and(|p| same_file(p, &path))) {
+            prompt.after_open = Some(destination);
+            prompt.activate = true;
+            return true;
+        }
         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
         let stamp = file_watch::Stamp::at(&path);
         self.startup_superseded = true;
@@ -160,8 +180,15 @@ impl PdfCraftApp {
     }
 
     pub(super) fn apply_remote_destination(&mut self, destination: pdfcraft_render::RemoteDestination) {
-        let Some(index) = self.views.len().checked_sub(1) else { return };
-        let Some(doc) = self.session.get(self.views[index].id) else { return };
+        if let Some(index) = self.views.len().checked_sub(1) {
+            self.apply_remote_destination_to(index, destination);
+        }
+    }
+
+    /// Navigate the selected tab, rather than assuming every target was newly opened.
+    fn apply_remote_destination_to(&mut self, index: usize, destination: pdfcraft_render::RemoteDestination) {
+        let Some(view) = self.views.get(index) else { return };
+        let Some(doc) = self.session.get(view.id) else { return };
         let warning = match destination {
             pdfcraft_render::RemoteDestination::Default => None,
             pdfcraft_render::RemoteDestination::Named(_) => Some("The linked PDF opened, but its named destination was not applied."),
