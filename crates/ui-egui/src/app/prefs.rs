@@ -424,7 +424,7 @@ mod local_pdf_trust_tests {
     use super::*;
 
     fn grant() -> crate::state::TrustedPdfLink {
-        let cwd = std::env::current_dir().expect("working directory");
+        let cwd = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         crate::state::TrustedPdfLink {
             source: cwd.join("source.pdf").to_string_lossy().into_owned(),
             source_sha256: "a".repeat(64),
