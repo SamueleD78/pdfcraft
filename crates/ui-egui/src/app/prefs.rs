@@ -144,6 +144,10 @@ impl PdfCraftApp {
         v["fill_text_color"] = serde_json::json!(self.fill_text_color);
         v["redact_prefs"] = self.redact_defaults.to_json();
         v["pinned_tools"] = serde_json::json!(self.pinned_tools);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            v["trusted_pdf_links"] = serde_json::json!(self.trusted_pdf_links);
+        }
         // Set outside json! above, which is at serde_json's macro recursion limit.
         v["hide_empty_highlight_hover"] = serde_json::Value::Bool(self.comment_prefs.hide_empty_highlight_hover);
         v["show_page_edge_shadows"] = self.show_page_edge_shadows.into();
@@ -201,6 +205,30 @@ impl PdfCraftApp {
         self.restore_view_prefs(&v);
         self.restore_comment_prefs(&v);
         self.restore_signature_prefs(&v);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.restore_local_link_trust(&v["trusted_pdf_links"]);
+    }
+
+    /// Restore only well-formed, bounded source/target grants from untrusted settings.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn restore_local_link_trust(&mut self, value: &serde_json::Value) {
+        self.trusted_pdf_links.clear();
+        let Some(entries) = value.as_array() else { return };
+        for entry in entries.iter().take(128) {
+            let Ok(grant) = serde_json::from_value::<crate::state::TrustedPdfLink>(entry.clone()) else { continue };
+            if grant.source.is_empty() || grant.target.is_empty()
+                || grant.source.len() > 4096 || grant.target.len() > 4096
+                || !std::path::Path::new(&grant.source).is_absolute()
+                || !std::path::Path::new(&grant.target).is_absolute()
+                || grant.source_sha256.len() != 64
+                || !grant.source_sha256.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                continue;
+            }
+            if !self.trusted_pdf_links.contains(&grant) {
+                self.trusted_pdf_links.push(grant);
+            }
+        }
     }
 
     /// The panels, combine view, zoom and recent files.
@@ -399,5 +427,51 @@ impl PdfCraftApp {
             let certs = pems.iter().filter_map(|p| pdfcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();
             self.apply_trusted_certificates(certs);
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod local_pdf_trust_tests {
+    use super::*;
+
+    fn grant() -> crate::state::TrustedPdfLink {
+        let cwd = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        crate::state::TrustedPdfLink {
+            source: cwd.join("source.pdf").to_string_lossy().into_owned(),
+            source_sha256: "a".repeat(64),
+            target: cwd.join("target.pdf").to_string_lossy().into_owned(),
+        }
+    }
+
+    #[test]
+    fn saved_grant_survives_restore_and_can_be_revoked() {
+        let mut app = PdfCraftApp::new();
+        let key = grant();
+        app.trusted_pdf_links.push(key.clone());
+        let saved = app.persist();
+        let mut restored = PdfCraftApp::new();
+        restored.restore(&saved);
+        assert_eq!(restored.trusted_pdf_links, vec![key]);
+
+        restored.trusted_pdf_links.clear();
+        let mut forgotten = PdfCraftApp::new();
+        forgotten.restore(&restored.persist());
+        assert!(forgotten.trusted_pdf_links.is_empty());
+    }
+
+    #[test]
+    fn damaged_grants_are_ignored_and_duplicates_removed() {
+        let key = grant();
+        let payload = serde_json::json!({
+            "trusted_pdf_links": [
+                key,
+                key,
+                {"source": "not-absolute.pdf", "source_sha256": "a".repeat(64), "target": "target.pdf"},
+                {"source": "/tmp/source.pdf", "source_sha256": "wrong", "target": "/tmp/target.pdf"}
+            ]
+        });
+        let mut app = PdfCraftApp::new();
+        app.restore(&payload.to_string());
+        assert_eq!(app.trusted_pdf_links.len(), 1);
     }
 }
