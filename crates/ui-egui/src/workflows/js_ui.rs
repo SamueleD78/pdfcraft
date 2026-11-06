@@ -76,6 +76,7 @@ impl PdfCraftApp {
                         self.views[i].go_to_page(p);
                     }
                 }
+                Request::OpenDoc { path, page } => self.request_script_document(id, path, page),
                 Request::LaunchUrl(u) => self.request_document_url(&u, crate::LinkOrigin::Script),
                 Request::Submit(u) => self.notify_fmt(
                     "The form asks to be submitted to {u}; PdfCraft doesn't send form data. Save the document to keep your entries.",
@@ -320,6 +321,32 @@ pub(crate) fn document_js_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
 pub(crate) use crate::dialogs::preferences::{
     PREFERENCES_BUTTON_ROW, PREFERENCES_MIN_SCROLL, date_language_picker_name, preferences_body, preferences_buttons, preferences_header,
 };
+
+impl PdfCraftApp {
+    /// Queue each local PDF request separately, preserving the zero-based page destination.
+    /// No target PDF is opened or read until an explicit or remembered user permission.
+    fn request_script_document(&mut self, id: DocId, file: String, page: Option<usize>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let source_path = self.session.get(id).and_then(|d| d.path.as_deref()).map(std::path::Path::new);
+            match pdfcraft_engine::js::resolve_javascript_document_path(source_path, &file) {
+                Ok(path) => {
+                    let destination = match page {
+                        Some(page) => pdfcraft_render::RemoteDestination::Page { page, view: pdfcraft_render::DestView::Top },
+                        None => pdfcraft_render::RemoteDestination::Default,
+                    };
+                    self.queue_script_remote_document(crate::PendingRemoteLink { source: id, path, destination });
+                }
+                Err(e) => self.notify_error(e),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (id, file, page);
+            self.notify_tr("Opening local files from JavaScript is unavailable on the web");
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
