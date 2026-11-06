@@ -406,6 +406,14 @@ pub struct PendingLink {
     pub origin: LinkOrigin,
 }
 
+/// A remembered approval, tied to the exact source path and source PDF bytes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TrustedPdfLink {
+    pub source: String,
+    pub source_sha256: String,
+    pub target: String,
+}
+
 /// A resolved local target and its original source/destination, independent of the active tab.
 #[derive(Clone, Debug)]
 pub struct PendingRemoteLink {
